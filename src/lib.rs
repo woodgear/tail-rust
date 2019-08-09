@@ -2,7 +2,7 @@ extern crate futures;
 extern crate inotify;
 
 use futures::{Async, Poll, Stream};
-use inotify::{EventOwned, EventStream, Inotify, WatchMask};
+use inotify::{EventOwned, EventStream, Inotify, EventMask,WatchMask};
 use std::{
     fs::{self,File},
     io,
@@ -89,8 +89,13 @@ impl<'a> Stream for Tail<'a> {
         loop {
             match self.inotify_event_stream.poll() {
                 Ok(Async::Ready(Some(event))) => {
-                    self.fill_buffer();
-                    self.buffer_to_lines();
+                    println!("inotify_event_stream Ready {:?}",event.mask);
+                    if event.mask==EventMask::DELETE || event.mask==EventMask::DELETE_SELF {
+                        return Ok(Async::Ready(None));
+                    }
+
+                    // self.fill_buffer();
+                    // self.buffer_to_lines();
                     if !self.lines.is_empty() {
                         return Ok(Async::Ready(Some(self.lines.pop().unwrap())));
                     }
@@ -112,11 +117,54 @@ impl<'a> Stream for Tail<'a> {
     }
 }
 
-fn main() -> Result<(), io::Error> {
-    let mut buff = [0; 32];
-    let tail = Tail::new("./log", &mut buff)?;
-    for line in tail.wait() {
-        print!("event: {:?}\n", line);
+// fn main() -> Result<(), io::Error> {
+//     let mut buff = [0; 32];
+//     let tail = Tail::new("./log", &mut buff)?;
+//     for line in tail.wait() {
+//         print!("event: {:?}\n", line);
+//     }
+//     Ok(())
+// }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn time()->String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let n =  SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        n.as_secs().to_string()
     }
-    Ok(())
+
+    #[test]
+    fn test_tail() {
+        use std::{thread,fs,time::Duration,io::Write};
+        println!("start test");
+        fs::remove_file("./log");
+        let mut file = fs::File::create("./log").unwrap();
+
+        let _ = thread::spawn(move || {
+            for i in 0..10 {
+                let data = format!("{} {}\n",time(),i);
+                file.write(data.as_bytes());
+                print!("{}",data);
+                thread::sleep(Duration::from_secs(1));
+            }
+            print!("remove_file");
+                thread::sleep(Duration::from_secs(3));
+
+            fs::remove_file("./log");
+        });
+
+        let mut buff = [0; 32];
+        let tail = Tail::new("./log", &mut buff).unwrap();
+        println!("tail.wait()");
+        let mut count = 0;
+        for line in tail.wait() {
+            let items:Vec<String> = line.unwrap().split_whitespace().map(|s|s.to_string()).collect();
+            let (t,v) = (items[0].clone(),items[1].clone());
+            print!("{} {} {}\n",time(), t,v);
+        }
+    }
 }
+
