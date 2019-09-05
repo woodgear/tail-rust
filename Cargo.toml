@@ -10,8 +10,9 @@ edition = "2018"
 futures = "0.1.28"
 inotify = "0.7.0"
 failure = "0.1.5"
-tokio-core = "0.1.17"
 tokio = "0.1.22"
+log = "0.4.8"
+simplelog = "0.7.1"
 
 
 [[bin]]

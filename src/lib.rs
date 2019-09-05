@@ -1,15 +1,10 @@
-use futures::{Async, Poll, Stream, try_ready};
+use futures::{Async, Poll, Stream};
 use inotify::{EventStream, Inotify, EventMask, WatchMask};
 use failure::Error;
-use std::{fs::{self, File}, path::*, io::SeekFrom, io::prelude::*, thread};
+use std::{fs::{self, File}, path::*, io::SeekFrom, io::prelude::*};
 use std::ffi::OsStr;
 use std::collections::VecDeque;
-use std::thread::JoinHandle;
-use tokio::sync::mpsc::{channel, Receiver};
-use failure::_core::time::Duration;
-use tokio::prelude::{Sink, Future};
-use std::sync::mpsc::SendError;
-use tokio_core::reactor::Core;
+use log::*;
 
 pub struct Tail {
     buff: Vec<u8>,
@@ -51,7 +46,7 @@ impl<'a> Tail {
         }
         let full_size = get_file_size(&self.file)? as usize;
         let reside_size = full_size - self.buf_pos;
-        println!("fill_buffer {} {} {}", full_size, self.buf_pos, reside_size);
+        info!("fill_buffer {} {} {}", full_size, self.buf_pos, reside_size);
         let mut buf = vec![0; reside_size];
         let data_read = read_file(&self.file, self.buf_pos, &mut buf)?;
 
@@ -80,17 +75,17 @@ impl<'a> Stream for Tail {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        println!("poll");
+        info!("poll");
         if let Some(line) = self.lines.pop_front() {
-            println!("just pop");
+            info!("just pop");
 
             return Ok(Async::Ready(Some(line)));
         }
         loop {
-            println!("loop");
+            info!("loop");
             match self.inotify_event_stream.poll() {
                 Ok(Async::Ready(Some(event))) => {
-                    println!("inotify_event_stream Ready {} {:?}", now(), event.mask);
+                    info!("inotify_event_stream Ready {} {:?}", now(), event.mask);
                     if event.mask == EventMask::DELETE || event.mask == EventMask::DELETE_SELF {
                         return Ok(Async::Ready(None));
                     } else {
@@ -99,16 +94,16 @@ impl<'a> Stream for Tail {
                     }
 
                     if let Some(line) = self.lines.pop_front() {
-                        println!("ready some data");
+                        info!("ready some data");
                         return Ok(Async::Ready(Some(line)));
                     }
                 }
                 Ok(Async::Ready(None)) => {
-                    println!("Async::Ready(None)");
+                    info!("Async::Ready(None)");
                     return Ok(Async::Ready(None));
                 }
                 Ok(Async::NotReady) => {
-                    println!("Async::NotReady");
+                    info!("Async::NotReady");
                     return Ok(Async::NotReady);
                 }
                 Err(e) => {
@@ -125,79 +120,11 @@ fn now() -> String {
     n.as_micros().to_string()
 }
 
-struct Test {
-    thread_handle: JoinHandle<()>,
-    rx: Receiver<String>,
-}
-
-impl Test {
-    fn new() -> Self {
-        let (tx, rx) = channel(1);
-        let thread_handle = thread::spawn(move || {
-            let mut core = Core::new().unwrap();
-            let handle = core.handle();
-            let f = tokio::timer::Interval::new_interval(Duration::from_secs(3))
-                .for_each(move|_| {
-                    let tx = tx.clone();
-                    println!("interval foreach");
-                    handle.spawn_fn(move || {
-                        let count = 0;
-
-                        let msg = format!("{}", count);
-                        println!("thread:{:?} start send ", thread::current().id());
-                        tx.clone().send(msg).then(|res| {
-                            match res {
-                                Ok(_) => {
-                                    Ok((()))
-                                }
-                                Err(e) => {
-                                    Err(())
-                                }
-                            }
-                        })
-                    });
-                    Ok(())
-                });
-            core.run(f);
-        });
-        return Test { thread_handle, rx };
-    }
-}
-
-impl Stream for Test {
-    type Item = String;
-    type Error = Error;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        println!("poll");
-        loop {
-            match self.rx.poll() {
-                Ok(Async::Ready(Some(msg))) => {
-                    println!("ready {}", msg);
-                    return Ok(Async::Ready(Some(msg)));
-                }
-                Err(e) => {
-                    println!("err {:?}", e);
-                    return Err(failure::err_msg(format!("{:?}", e)));
-                }
-                Ok(Async::NotReady) => {
-                    println!("notready");
-                    return Ok(Async::NotReady);
-                }
-                Ok(Async::Ready(None)) => {
-                    println!("none");
-                    return Ok(Async::Ready(None));
-                }
-            }
-        }
-    }
-}
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::str::FromStr;
+    use simplelog::{TermLogger, LevelFilter, TerminalMode, ConfigBuilder};
 
 
     fn abs_sub(l: u128, r: u128) -> u128 {
@@ -208,15 +135,10 @@ mod tests {
     }
 
     #[test]
-    fn test_tokio() {
-        let mut t = Test::new();
-        for line in t.wait() {
-            println!("thread:{:?} {} {:?}", thread::current().id(), now(), line);
-        }
-    }
-
-    #[test]
     fn test_tail() {
+        let log_config = ConfigBuilder::new().set_thread_level(LevelFilter::Info).build();
+        let _ = TermLogger::init(LevelFilter::Debug, log_config, TerminalMode::Mixed);
+
         use std::{thread, fs, time::Duration, io::Write};
         let total_count = 10;
         let log_path = Path::new("./log");
@@ -227,7 +149,7 @@ mod tests {
             for i in 0..total_count {
                 let now = now();
                 let data = format!("{} {} {}\n", now, i, long_content);
-                println!("write data {} {}", now, i);
+                info!("write data {} {}", now, i);
                 let _ = file.write_all(data.as_bytes());
                 thread::sleep(Duration::from_micros(1000));
             }
