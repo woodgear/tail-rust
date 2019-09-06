@@ -1,10 +1,11 @@
-use futures::{Async, Poll, Stream};
+use futures::{Async, Poll, Stream, try_ready};
 use inotify::{EventStream, Inotify, EventMask, WatchMask};
 use failure::Error;
 use std::{fs::{self, File}, path::*, io::SeekFrom, io::prelude::*};
 use std::ffi::OsStr;
 use std::collections::VecDeque;
 use log::*;
+use tokio::prelude::Future;
 
 pub struct Tail {
     buff: Vec<u8>,
@@ -70,7 +71,7 @@ impl<'a> Tail {
     }
 }
 
-impl<'a> Stream for Tail {
+impl Stream for Tail {
     type Item = String;
     type Error = Error;
 
@@ -120,28 +121,70 @@ fn now() -> String {
     n.as_micros().to_string()
 }
 
+
+pub struct FileStream {
+    path: PathBuf,
+    offset: usize,
+    inotify: EventStream<[u8; 32]>,
+
+}
+
+impl FileStream {
+    pub fn new(path: &dyn AsRef<OsStr>) -> Result<Self, Error> {
+        let mut inotify = Inotify::init()?;
+        let path = path.as_ref();
+        inotify.add_watch(path, WatchMask::MODIFY | WatchMask::DELETE_SELF | WatchMask::DELETE)?;
+        let stream = inotify.event_stream([0; 32]);
+        let path = PathBuf::from(path);
+        Ok(Self {
+            offset: get_file_size(&path)?,
+            path,
+            inotify: stream,
+        })
+    }
+}
+
+impl Stream for FileStream {
+    type Item = Vec<u8>;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        loop {
+            match try_ready!(self.inotify.poll()) {
+                Some(event) => {
+                    if event.mask == EventMask::DELETE || event.mask == EventMask::DELETE_SELF {
+                        return Ok(Async::Ready(None));
+                    }
+                    let mut f = tokio::fs::File::open("./data")
+                        .and_then(|mut f| f.seek(SeekFrom::Start(self.offset as u64)))
+                        .and_then(|(f, offset)| tokio::io::read_to_end(f, vec![]));
+                    let (f,buff) =  try_ready!(f.poll());
+                    return Ok(Async::Ready(Some(buff)))
+                }
+                None => {
+                    return Ok(Async::Ready(None));
+                }
+            }
+        }
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::str::FromStr;
     use simplelog::{TermLogger, LevelFilter, TerminalMode, ConfigBuilder};
+    use std::{thread, fs, time::Duration, io::Write};
 
-
-    fn abs_sub(l: u128, r: u128) -> u128 {
-        if l > r {
-            return l - r;
-        }
-        return r - l;
-    }
-
-    #[test]
-    fn test_tail() {
+    fn init_log() {
         let log_config = ConfigBuilder::new().set_thread_level(LevelFilter::Info).build();
         let _ = TermLogger::init(LevelFilter::Debug, log_config, TerminalMode::Mixed);
+    }
 
-        use std::{thread, fs, time::Duration, io::Write};
+    fn append_file(file:&'static str) {
         let total_count = 10;
-        let log_path = Path::new("./log");
+        let log_path = Path::new(file);
         let _ = fs::remove_file(log_path);
         let mut file = fs::File::create(log_path).unwrap();
         let long_content = "1".repeat(1024 * 100);
@@ -157,6 +200,36 @@ mod tests {
 
             let _ = fs::remove_file(log_path);
         });
+    }
+
+    fn abs_sub(l: u128, r: u128) -> u128 {
+        if l > r {
+            return l - r;
+        }
+        return r - l;
+    }
+    #[test]
+    fn test_file_stream() {
+        init_log();
+        append_file("./data");
+        info!("test_file_stream");
+        let f = FileStream::new(&Path::new("./data")).unwrap();
+        tokio::run(futures::lazy(||{
+            tokio::spawn(f.for_each(|buf| {
+                println!("buf len {}",buf.len());
+                Ok(())
+            }).map_err(|_|()))
+        }))
+    }
+
+    #[test]
+    fn test_tail() {
+        init_log();
+
+        let log_path = "./data";
+        append_file(log_path);
+
+        let total_count = 10;
         let tail = Tail::new(&log_path).unwrap();
         let mut expect_count = 0;
         for line in tail.wait() {
@@ -172,7 +245,6 @@ mod tests {
             );
             assert_eq!(count, format!("{}", expect_count));
             expect_count = expect_count + 1;
-//            assert!(abs_sub(current_time, real_time) < 1000);
         }
         assert_eq!(expect_count, total_count);
     }
