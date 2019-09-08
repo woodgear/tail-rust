@@ -13,5 +13,6 @@ log = "0.4.8"
 simplelog = "0.7.1"
 tokio = "0.1.22"
 notify = "4.0.13"
+bytes = "0.4.12"
 [target.'cfg(unix)'.dependencies]
 inotify = "0.7.0"
