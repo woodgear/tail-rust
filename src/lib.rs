@@ -1,45 +1,46 @@
-use bytes::{BufMut, BytesMut};
+use bytes::BytesMut;
 use failure::Error;
 use futures::{try_ready, Async, Poll, Stream};
 #[cfg(unix)]
 use inotify::{EventMask, EventStream, Inotify, WatchMask};
 use log::*;
 #[cfg(windows)]
-use notify::{watcher, RecommendedWatcher, RecursiveMode, Watcher};
-use std::collections::VecDeque;
-use std::ffi::OsStr;
+use notify::{watcher, RecursiveMode, Watcher};
+
+use tokio::prelude::*;
+
+use tokio::sync::mpsc::{Receiver, Sender};
+
 use std::{
-    fs::{self, File},
-    io::prelude::*,
+    ffi::OsStr,
+    fs::{self},
     io::SeekFrom,
     path::*,
+    thread::{self, JoinHandle},
+    time::Duration,
 };
-use tokio::codec::Decoder;
-use tokio::codec::LinesCodec;
-use tokio::io;
-use tokio::prelude::{AsyncRead, Future};
+
+use tokio::{
+    codec::{Decoder, LinesCodec},
+    prelude::Future,
+};
 
 fn get_file_size(path: &dyn AsRef<OsStr>) -> Result<usize, Error> {
     let meta = fs::metadata(path.as_ref())?;
     return Ok(meta.len() as usize);
 }
 
-fn read_file(path: &Path, from: usize, buf: &mut Vec<u8>) -> Result<usize, Error> {
-    let mut file = File::open(path)?;
-    let _start = file.seek(SeekFrom::Start(from as u64))?;
-    return Ok(file.read(buf)? as usize);
-}
-
 pub struct Tail {
-    file: PathBuf,
+    _file: PathBuf,
     s: StreamFarmedRead<FileStream, LinesCodec>,
 }
 
 impl Tail {
-    pub fn new(path_str: &'static str) -> Result<Self, Error> {
-        let s = StreamFarmedRead::new(FileStream::new(path_str)?, LinesCodec::new());
+    pub fn new<P: AsRef<OsStr> + ?Sized>(path: &P) -> Result<Self, Error> {
+        // let path = path.as_ref().to_os_string();
+        let s = StreamFarmedRead::new(FileStream::new(path)?, LinesCodec::new());
         Ok(Self {
-            file: PathBuf::from(path_str),
+            _file: PathBuf::from(path),
             s,
         })
     }
@@ -65,21 +66,12 @@ pub enum FileEvent {
     Delete,
 }
 
-use tokio::prelude::*;
-
-use std::{
-    fmt::format,
-    thread::{self, JoinHandle},
-    time::Duration,
-};
-use tokio::sync::mpsc::{Receiver, Sender};
-
 type FileEventWrapper = Result<Option<FileEvent>, Error>;
 
 fn send_event(tx: Sender<FileEventWrapper>, event: FileEventWrapper) {
     tokio::run(futures::lazy(move || {
         tokio::spawn(futures::lazy(move || {
-            tx.clone().send(event).and_then(|_| Ok(())).map_err(|e| ())
+            tx.clone().send(event).and_then(|_| Ok(())).map_err(|_| ())
         }))
     }));
 }
@@ -89,13 +81,14 @@ mod file_watcher_impl {
     use super::*;
     use notify::DebouncedEvent;
     pub struct FileWatcher {
-        file: PathBuf,
-        thread_handle: JoinHandle<()>,
+        _file: PathBuf,
+        _thread_handle: JoinHandle<()>,
         rx: Receiver<FileEventWrapper>,
     }
 
     impl FileWatcher {
-        pub fn new<P: AsRef<OsStr> + ?Sized>(path: &'static P) -> Self {
+        pub fn new<P: AsRef<OsStr> + ?Sized>(path: &P) -> Self {
+            let path = path.as_ref().to_os_string();
             let (event_tx, event_rx) = tokio::sync::mpsc::channel(1);
             let file = PathBuf::from(path);
             let file_clone = file.clone();
@@ -122,7 +115,7 @@ mod file_watcher_impl {
                                     send_event(event_tx.clone(), Ok(Some(FileEvent::Delete)));
                                     break;
                                 }
-                                DebouncedEvent::Error(e, p) => {
+                                DebouncedEvent::Error(e, _) => {
                                     send_event(
                                         event_tx.clone(),
                                         Err(failure::err_msg(format!("{:?}", e))),
@@ -141,8 +134,8 @@ mod file_watcher_impl {
             });
 
             Self {
-                file,
-                thread_handle: notify_thread,
+                _file: file,
+                _thread_handle: notify_thread,
                 rx: event_rx,
             }
         }
@@ -184,12 +177,11 @@ pub struct FileStream {
 }
 
 impl FileStream {
-    pub fn new(path_str: &'static str) -> Result<Self, Error> {
-        let path = PathBuf::from(path_str);
+    pub fn new<P: AsRef<OsStr> + ?Sized>(path: &P) -> Result<Self, Error> {
         Ok(Self {
-            offset: get_file_size(&path)?,
-            path,
-            file_watcher: FileWatcher::new(path_str),
+            offset: get_file_size(&path).unwrap_or(0),
+            path: PathBuf::from(path),
+            file_watcher: FileWatcher::new(path),
         })
     }
 }
@@ -206,9 +198,10 @@ impl Stream for FileStream {
                         return Ok(Async::Ready(None));
                     } else if event == FileEvent::Modify {
                         let mut f = tokio::fs::File::open(self.path.clone())
-                            .and_then(|mut f| f.seek(SeekFrom::Start(self.offset as u64)))
-                            .and_then(|(f, offset)| tokio::io::read_to_end(f, vec![]));
-                        let (f, buff) = try_ready!(f.poll());
+                            .and_then(|f| f.seek(SeekFrom::Start(self.offset as u64)))
+                            .and_then(|(f, _)| tokio::io::read_to_end(f, vec![]));
+                        let (_, buff) = try_ready!(f.poll());
+
                         self.offset += buff.len();
                         return Ok(Async::Ready(Some(buff)));
                     }
@@ -260,13 +253,13 @@ where
                     let frame = self
                         .decoder
                         .decode_eof(&mut self.buffer)
-                        .map_err(|e| failure::err_msg("xxx"))?;
+                        .map_err(|_| failure::err_msg("xxx"))?;
                     return Ok(Async::Ready(frame));
                 }
                 if let Some(frame) = self
                     .decoder
                     .decode(&mut self.buffer)
-                    .map_err(|e| failure::err_msg("xxx"))?
+                    .map_err(|_| failure::err_msg("xxx"))?
                 {
                     return Ok(Async::Ready(Some(frame)));
                 }
@@ -283,7 +276,6 @@ where
             }
             self.is_readable = true;
         }
-        return Ok(Async::Ready(None));
     }
 }
 
@@ -301,21 +293,21 @@ mod tests {
         let _ = TermLogger::init(LevelFilter::Debug, log_config, TerminalMode::Mixed);
     }
 
-    fn write_file(data: String, file: &Path) {
+    fn write_file(data: String, file: String) {
         use std::process::Command;
         let res = Command::new("cmd")
-            .args(&["/c", &format!("echo {} >> ./data", data)])
+            .args(&["/c", &format!("echo {} >> {}", data, file)])
             .spawn();
     }
 
-    fn append_file(log_path: &'static str, total_count: usize, delay_secs: usize) {
+    fn append_file(log_path_str: &'static str, total_count: usize, delay_secs: usize) {
         info!("append_file");
-        let log_path = PathBuf::from(log_path);
+        let log_path = PathBuf::from(log_path_str);
 
         let delay = Duration::from_secs(delay_secs as u64);
         let _ = fs::remove_file(&log_path);
-        let mut file = fs::File::create(&log_path).unwrap();
-        // thread::sleep(delay);
+        let _ = fs::File::create(&log_path).unwrap();
+
         let long_content = "1".repeat(3);
         let _ = thread::spawn(move || {
             info!("append file thread start");
@@ -325,7 +317,7 @@ mod tests {
                 let now = now();
                 let data = format!("{} {} {}", now, i, long_content);
                 info!("write data {} {} len {}", now, i, now.as_bytes().len());
-                write_file(data, log_path.as_path());
+                write_file(data, log_path_str.to_string());
                 thread::sleep(delay);
             }
             info!("over");
@@ -349,29 +341,35 @@ mod tests {
         let _ = TermLogger::init(LevelFilter::Debug, log_config, TerminalMode::Mixed);
         append_file("./data", 10, 5);
     }
-    // #[test]
-    // fn test_tail() {
-    //     use tokio::codec::LinesCodec;
-
-    //     init_log();
-    //     info!("test_file_watcher");
-    //     let path_str = "./data";
-    //     append_file(path_str, 5, 1);
-
-    //     let file = FileStream::new(path_str).unwrap();
-    //     let tail = StreamFarmedRead::new(file, LinesCodec::new());
-    //     let f = tail
-    //         .for_each(move |line| {
-    //             info!("===========> line {}", line);
-    //             Ok(())
-    //         })
-    //         .map_err(|e| ());
-
-    //     tokio::run(f);
-    // }
 
     #[test]
     fn test_file_watcher() {
+        init_log();
+        let path_str = "./data";
+        append_file(path_str, 5, 1);
+        for i in FileWatcher::new(path_str).wait() {
+            println!("i {:?}", i);
+        }
+    }
+
+    #[test]
+    fn test_file_stream_1() {
+        init_log();
+        let path_str = "./data";
+        append_file(path_str, 5, 1);
+
+        tokio::run(futures::lazy(move || {
+            tokio::spawn(futures::lazy(move || {
+                for i in FileStream::new(path_str).unwrap().wait() {
+                    println!("i {:?}", i);
+                }
+                Ok(())
+            }))
+        }));
+    }
+
+    #[test]
+    fn test_file_watcher_1() {
         init_log();
         info!("test_file_watcher");
         let path_str = "./data";
@@ -428,7 +426,7 @@ mod tests {
     fn test_tail() {
         init_log();
         let path_str = "./data";
-        let total_count = 500;
+        let total_count = 5;
         append_file(path_str, total_count, 0);
 
         let mut expect_count = 0;
@@ -446,11 +444,9 @@ mod tests {
                     current_time,
                     abs_sub(current_time, real_time),
                 );
-                // assert_eq!(count, format!("{}", expect_count));
-                // expect_count = expect_count + 1;
                 Ok(())
             })
-            .map_err(|e| ());
+            .map_err(|_| ());
         tokio::run(f);
     }
 }
