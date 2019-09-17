@@ -1,17 +1,20 @@
-use futures::future::Future;
-use futures::stream::Stream;
+#[deny(warnings)]
+use futures::{future::Future, stream::Stream};
+use tokio_threadpool::ThreadPool;
+
 use tail_rust::Tail;
 
 fn tail(path: String) {
-    tokio::run(
-        Tail::new(&path)
-            .unwrap()
-            .for_each(|line| {
-                println!("tail: {}", line);
-                Ok(())
-            })
-            .map_err(|_| ()),
-    );
+    let thread_pool = ThreadPool::new();
+
+    thread_pool.spawn(futures::lazy(move || {
+        for i in Tail::new(&path).unwrap().wait() {
+            println!("line {}", i.unwrap());
+        }
+        Ok(())
+    }));
+
+    thread_pool.shutdown().wait().unwrap();
 }
 
 fn main() {

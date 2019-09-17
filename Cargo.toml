@@ -14,5 +14,6 @@ simplelog = "0.7.1"
 tokio = "0.1.22"
 notify = "4.0.13"
 bytes = "0.4.12"
+tokio-threadpool = "0.1.15"
 [target.'cfg(unix)'.dependencies]
 inotify = "0.7.0"

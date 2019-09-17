@@ -152,11 +152,11 @@ mod file_watcher_impl {
                         return Ok(Async::Ready(Some(e)));
                     }
                     Ok(None) => {
-                        println!("get a none");
+                        info!("get a none");
                         return Ok(Async::Ready(None));
                     }
                     Err(e) => {
-                        println!("e {:?}", e);
+                        info!("e {:?}", e);
                         return Err(e);
                     }
                 },
@@ -201,13 +201,13 @@ mod file_watcher_impl {
         type Error = Error;
 
         fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-            println!("FileWatcher poll");
+            info!("FileWatcher poll");
             if self.is_delete {
                 return Ok(Async::Ready(None));
             }
             match try_ready!(self.inotify_event_stream.poll()) {
                 Some(event) => {
-                    println!("FileWatcher event {:?}", event.mask);
+                    info!("FileWatcher event {:?}", event.mask);
                     if event.mask == EventMask::DELETE || event.mask == EventMask::DELETE_SELF {
                         self.is_delete = true;
                         return Ok(Async::Ready(Some(FileEvent::Delete)));
@@ -215,7 +215,7 @@ mod file_watcher_impl {
                     return Ok(Async::Ready(Some(FileEvent::Modify)));
                 }
                 None => {
-                    println!("Async::Ready(None)");
+                    info!("Async::Ready(None)");
                     return Ok(Async::Ready(None));
                 }
             }
@@ -247,9 +247,9 @@ impl Stream for FileStream {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        println!("FileStream poll");
+        info!("FileStream poll");
         loop {
-            println!("FileStream loop");
+            info!("FileStream loop");
             match try_ready!(self.file_watcher.poll()) {
                 Some(event) => {
                     info!("FileStream event {:?}", event);
@@ -410,29 +410,32 @@ mod tests {
     }
 
     #[test]
-    fn test_file_watcher() {
+    fn test_file_watcher_2() {
         init_log();
         let path_str = "./data";
         append_file(path_str, 5, 1);
         for i in FileWatcher::new(path_str).wait() {
-            println!("i {:?}", i);
+            info!("i => {:?}", i);
         }
     }
 
     #[test]
     fn test_file_stream_1() {
+        use tokio_threadpool::ThreadPool;
         init_log();
         let path_str = "./data";
         append_file(path_str, 5, 1);
 
-        tokio::run(futures::lazy(move || {
-            tokio::spawn(futures::lazy(move || {
-                for i in FileStream::new(path_str).unwrap().wait() {
-                    println!("i {:?}", i);
-                }
-                Ok(())
-            }))
+        let thread_pool = ThreadPool::new();
+
+        thread_pool.spawn(futures::lazy(move || {
+            for i in FileStream::new(path_str).unwrap().wait() {
+                info!("i {:?}", i);
+            }
+            Ok(())
         }));
+
+        thread_pool.shutdown().wait().unwrap();
     }
 
     #[test]
@@ -465,7 +468,7 @@ mod tests {
                 FileEvent::Delete,
             ]
         );
-        println!("res {:?}", res);
+        info!("res {:?}", res);
     }
 
     #[test]

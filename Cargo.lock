@@ -720,6 +720,7 @@ dependencies = [
  "notify 4.0.13 (registry+https://github.com/rust-lang/crates.io-index)",
  "simplelog 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio 0.1.22 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tokio-threadpool 0.1.15 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
