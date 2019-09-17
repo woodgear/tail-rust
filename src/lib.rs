@@ -366,6 +366,7 @@ mod tests {
     #[cfg(unix)]
     fn write_file(data: String, file: String) {
         use std::fs::OpenOptions;
+        use std::io::Write;
         let mut file = OpenOptions::new().append(true).open(file).unwrap();
         let _ = file.write_all(format!("{}\n", data).as_bytes());
     }
