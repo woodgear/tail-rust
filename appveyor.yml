@@ -44,7 +44,7 @@ install:
 test_script:
   # we don't run the "test phase" when doing deploys
   - if [%APPVEYOR_REPO_TAG%]==[false] (
-    ./test.bat %TARGET%
+      ci/script.bat %TARGET%
     )
 
 cache:
