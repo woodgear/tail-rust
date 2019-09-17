@@ -64,8 +64,9 @@ pub enum FileEvent {
 mod file_watcher_impl {
     use super::*;
     use notify::DebouncedEvent;
-    use tokio::sync::mpsc::{Sender};
-
+    use tokio::sync::mpsc::{Sender,Receiver};
+    use std::{thread::{self,JoinHandle},time::Duration};
+    use futures::sink::Sink;
     type FileEventWrapper = Result<Option<FileEvent>, Error>;
 
     fn send_event(tx: Sender<FileEventWrapper>, event: FileEventWrapper) {
@@ -102,7 +103,7 @@ mod file_watcher_impl {
 
                     match res {
                         Ok(event) => {
-                            info!("notify event {} {:?}", now(), event);
+                            info!("notify event {:?}", event);
                             match event {
                                 DebouncedEvent::Write(_) => {
                                     send_event(event_tx.clone(), Ok(Some(FileEvent::Modify)));
@@ -340,7 +341,7 @@ mod tests {
     use super::*;
     use simplelog::{ConfigBuilder, LevelFilter, TermLogger, TerminalMode};
     use std::str::FromStr;
-    use std::{fs, io::Write, thread, time::Duration};
+    use std::{fs, thread, time::Duration};
 
     fn now() -> String {
         use std::time::{SystemTime, UNIX_EPOCH};
@@ -357,7 +358,7 @@ mod tests {
     #[cfg(windows)]
     fn write_file(data: String, file: String) {
         use std::process::Command;
-        let res = Command::new("cmd")
+        let _res = Command::new("cmd")
             .args(&["/c", &format!("echo {} >> {}", data, file)])
             .spawn();
     }
