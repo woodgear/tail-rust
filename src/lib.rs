@@ -168,6 +168,62 @@ mod file_watcher_impl {
     }
 }
 
+#[cfg(unix)]
+mod file_watcher_impl {
+    use super::*;
+    pub struct FileWatcher {
+        file: PathBuf,
+        inotify_event_stream: EventStream<[u8; 32]>,
+        is_delete: bool,
+    }
+    impl FileWatcher {
+        pub fn new<P: AsRef<OsStr> + ?Sized>(path: &P) -> Self {
+            let mut inotify = Inotify::init().unwrap();
+            let path = path.as_ref();
+            inotify
+                .add_watch(
+                    path,
+                    WatchMask::MODIFY | WatchMask::DELETE_SELF | WatchMask::DELETE,
+                )
+                .unwrap();
+            let stream = inotify.event_stream([0; 32]);
+            let file = PathBuf::from(path);
+            Self {
+                file,
+                is_delete: false,
+                inotify_event_stream: stream,
+            }
+        }
+    }
+
+    impl Stream for FileWatcher {
+        type Item = FileEvent;
+        type Error = Error;
+
+        fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+            println!("FileWatcher poll");
+            if self.is_delete {
+                return Ok(Async::Ready(None));
+            }
+            match try_ready!(self.inotify_event_stream.poll()) {
+                Some(event) => {
+                    println!("FileWatcher event {:?}", event.mask);
+                    if event.mask == EventMask::DELETE || event.mask == EventMask::DELETE_SELF {
+                        self.is_delete = true;
+                        return Ok(Async::Ready(Some(FileEvent::Delete)));
+                    }
+                    return Ok(Async::Ready(Some(FileEvent::Modify)));
+                }
+                None => {
+                    println!("Async::Ready(None)");
+                    return Ok(Async::Ready(None));
+                }
+            }
+        }
+    }
+
+}
+
 use file_watcher_impl::*;
 
 pub struct FileStream {
@@ -191,9 +247,12 @@ impl Stream for FileStream {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        println!("FileStream poll");
         loop {
+            println!("FileStream loop");
             match try_ready!(self.file_watcher.poll()) {
                 Some(event) => {
+                    info!("FileStream event {:?}", event);
                     if event == FileEvent::Delete {
                         return Ok(Async::Ready(None));
                     } else if event == FileEvent::Modify {
@@ -207,6 +266,7 @@ impl Stream for FileStream {
                     }
                 }
                 None => {
+                    info!("FileStream event noone");
                     return Ok(Async::Ready(None));
                 }
             }
@@ -292,12 +352,19 @@ mod tests {
             .build();
         let _ = TermLogger::init(LevelFilter::Debug, log_config, TerminalMode::Mixed);
     }
-
+    #[cfg(windows)]
     fn write_file(data: String, file: String) {
         use std::process::Command;
         let res = Command::new("cmd")
             .args(&["/c", &format!("echo {} >> {}", data, file)])
             .spawn();
+    }
+
+    #[cfg(unix)]
+    fn write_file(data: String, file: String) {
+        use std::fs::OpenOptions;
+        let mut file = OpenOptions::new().append(true).open(file).unwrap();
+        file.write_all(format!("{}\n", data).as_bytes());
     }
 
     fn append_file(log_path_str: &'static str, total_count: usize, delay_secs: usize) {
@@ -402,7 +469,7 @@ mod tests {
     }
 
     #[test]
-    fn test_file_stream() {
+    fn test_file_stream_2() {
         init_log();
         info!("test_file_watcher");
         let path_str = "./data";
