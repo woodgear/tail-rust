@@ -1,4 +1,5 @@
-#[deny(warnings)]
+#![deny(warnings)]
+
 use futures::{future::Future, stream::Stream};
 use tokio_threadpool::ThreadPool;
 

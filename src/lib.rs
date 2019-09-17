@@ -1,3 +1,5 @@
+#![deny(warnings)]
+
 use bytes::BytesMut;
 use failure::Error;
 use futures::{try_ready, Async, Poll, Stream};
@@ -7,17 +9,14 @@ use log::*;
 #[cfg(windows)]
 use notify::{watcher, RecursiveMode, Watcher};
 
-use tokio::prelude::*;
+// use tokio::prelude::*;
 
-use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::{
     ffi::OsStr,
     fs::{self},
     io::SeekFrom,
     path::*,
-    thread::{self, JoinHandle},
-    time::Duration,
 };
 
 use tokio::{
@@ -54,32 +53,29 @@ impl Stream for Tail {
     }
 }
 
-fn now() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let n = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-    n.as_secs().to_string()
-}
-
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum FileEvent {
     Modify,
     Delete,
 }
 
-type FileEventWrapper = Result<Option<FileEvent>, Error>;
-
-fn send_event(tx: Sender<FileEventWrapper>, event: FileEventWrapper) {
-    tokio::run(futures::lazy(move || {
-        tokio::spawn(futures::lazy(move || {
-            tx.clone().send(event).and_then(|_| Ok(())).map_err(|_| ())
-        }))
-    }));
-}
 
 #[cfg(windows)]
 mod file_watcher_impl {
     use super::*;
     use notify::DebouncedEvent;
+    use tokio::sync::mpsc::{Sender};
+
+    type FileEventWrapper = Result<Option<FileEvent>, Error>;
+
+    fn send_event(tx: Sender<FileEventWrapper>, event: FileEventWrapper) {
+        tokio::run(futures::lazy(move || {
+            tokio::spawn(futures::lazy(move || {
+                tx.clone().send(event).and_then(|_| Ok(())).map_err(|_| ())
+            }))
+        }));
+    }
+
     pub struct FileWatcher {
         _file: PathBuf,
         _thread_handle: JoinHandle<()>,
@@ -172,7 +168,7 @@ mod file_watcher_impl {
 mod file_watcher_impl {
     use super::*;
     pub struct FileWatcher {
-        file: PathBuf,
+        _file: PathBuf,
         inotify_event_stream: EventStream<[u8; 32]>,
         is_delete: bool,
     }
@@ -189,7 +185,7 @@ mod file_watcher_impl {
             let stream = inotify.event_stream([0; 32]);
             let file = PathBuf::from(path);
             Self {
-                file,
+                _file:file,
                 is_delete: false,
                 inotify_event_stream: stream,
             }
@@ -346,6 +342,12 @@ mod tests {
     use std::str::FromStr;
     use std::{fs, io::Write, thread, time::Duration};
 
+    fn now() -> String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let n = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        n.as_secs().to_string()
+    }
+
     fn init_log() {
         let log_config = ConfigBuilder::new()
             .set_thread_level(LevelFilter::Error)
@@ -364,7 +366,7 @@ mod tests {
     fn write_file(data: String, file: String) {
         use std::fs::OpenOptions;
         let mut file = OpenOptions::new().append(true).open(file).unwrap();
-        file.write_all(format!("{}\n", data).as_bytes());
+        let _ = file.write_all(format!("{}\n", data).as_bytes());
     }
 
     fn append_file(log_path_str: &'static str, total_count: usize, delay_secs: usize) {
@@ -446,14 +448,14 @@ mod tests {
         append_file(path_str, 5, 1);
         use std::sync::mpsc::channel;
         let (tx, rx) = channel();
-        let path = PathBuf::from(path_str);
+        let _path = PathBuf::from(path_str);
         let f = FileWatcher::new(path_str)
             .for_each(move |e| {
                 info!("===========> get event e {:?}", e.clone());
-                tx.clone().send(e);
+                let _ = tx.clone().send(e);
                 Ok(())
             })
-            .map_err(|e| ());
+            .map_err(|_e| ());
 
         tokio::run(f);
         let res: Vec<FileEvent> = rx.iter().collect();
@@ -478,16 +480,16 @@ mod tests {
         let path_str = "./data";
         append_file(path_str, 5, 1);
         use std::sync::mpsc::channel;
-        let (tx, rx) = channel();
-        let path = PathBuf::from(path_str);
+        let (tx, _rx) = channel();
+        let _path = PathBuf::from(path_str);
         let f = FileStream::new(path_str)
             .unwrap()
             .for_each(move |e| {
-                tx.clone().send(e.clone());
+                let _ = tx.clone().send(e.clone());
                 info!("{:?}", String::from_utf8(e));
                 Ok(())
             })
-            .map_err(|e| ());
+            .map_err(|_e| ());
 
         tokio::run(f);
     }
@@ -499,7 +501,7 @@ mod tests {
         let total_count = 5;
         append_file(path_str, total_count, 0);
 
-        let mut expect_count = 0;
+        let _expect_count = 0;
         let f = Tail::new(path_str)
             .unwrap()
             .for_each(|line| {
