@@ -14,11 +14,11 @@ environment:
   # don't need
   matrix:
     # MinGW
-    - TARGET: i686-pc-windows-gnu
+    # - TARGET: i686-pc-windows-gnu
     - TARGET: x86_64-pc-windows-gnu
 
     # MSVC
-    - TARGET: i686-pc-windows-msvc
+    # - TARGET: i686-pc-windows-msvc
     - TARGET: x86_64-pc-windows-msvc
 
     # Testing other channels
@@ -39,6 +39,7 @@ install:
   - set PATH=%PATH%;C:\Users\appveyor\.cargo\bin
   - rustc -Vv
   - cargo -V
+  - rustup component add clippy
 
 # TODO This is the "test phase", tweak it as you see fit
 test_script:

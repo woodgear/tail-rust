@@ -5,6 +5,7 @@ set -ex
 # TODO This is the "test phase", tweak it as you see fit
 main() {
     cargo check
+    cargo clippy -- -D warnings
     cross build --target $TARGET
     cargo test --target $TARGET -- --test-threads=1
 }

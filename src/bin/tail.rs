@@ -1,4 +1,5 @@
 #![deny(warnings)]
+#![deny(clippy::all)]
 
 use futures::{future::Future, stream::Stream};
 use tokio_threadpool::ThreadPool;
@@ -20,7 +21,7 @@ fn tail(path: String) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let args_slice: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let args_slice: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
     match args_slice[1..] {
         ["-f", path] => {
             println!("tail -f {}", path);

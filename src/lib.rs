@@ -1,4 +1,5 @@
 #![deny(warnings)]
+#![deny(clippy::all)]
 
 use bytes::BytesMut;
 use failure::Error;
@@ -7,7 +8,7 @@ use futures::{try_ready, Async, Poll, Stream};
 use inotify::{EventMask, EventStream, Inotify, WatchMask};
 use log::*;
 #[cfg(windows)]
-use notify::{watcher, RecursiveMode, Watcher};
+use notify::{watcher, RecursiveMode};
 
 // use tokio::prelude::*;
 
@@ -67,6 +68,7 @@ mod file_watcher_impl {
     use tokio::sync::mpsc::{Sender,Receiver};
     use std::{thread::{self,JoinHandle},time::Duration};
     use futures::sink::Sink;
+    use notify::Watcher;
     type FileEventWrapper = Result<Option<FileEvent>, Error>;
 
     fn send_event(tx: Sender<FileEventWrapper>, event: FileEventWrapper) {
