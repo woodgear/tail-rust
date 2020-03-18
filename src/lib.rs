@@ -448,7 +448,7 @@ mod tests {
     fn test_file_watcher_1() {
         init_log();
         info!("test_file_watcher");
-        let path_str = "./data";
+        let path_str = "./data-1";
         append_file(path_str, 5, 1);
         use std::sync::mpsc::channel;
         let (tx, rx) = channel();
